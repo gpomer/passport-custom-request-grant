@@ -15,6 +15,7 @@ use Psr\Http\Message\ServerRequestInterface;
 
 class CustomRequestGrant extends AbstractGrant
 {
+
     /**
      * @param UserRepositoryInterface         $userRepository
      * @param RefreshTokenRepositoryInterface $refreshTokenRepository
@@ -39,10 +40,19 @@ class CustomRequestGrant extends AbstractGrant
     )
     {
         // Validate request
-        $client = $this->validateClient($request);
+        //$client = $this->validateClient($request);
+
         $scopes = $this->validateScopes($this->getRequestParameter('scope', $request));
         $user = $this->validateUser($request);
 
+        $client_keys = \DB::select("select id, secret from oauth_clients where user_id=?",[$user->getIdentifier()]);
+
+        $client = $this->clientRepository->getClientEntity(
+            $client_keys[0]->id,
+            $this->getIdentifier(),
+            $client_keys[0]->secret,
+            true
+        );
         // Finalize the requested scopes
         $scopes = $this->scopeRepository->finalizeScopes($scopes, $this->getIdentifier(), $client, $user->getIdentifier());
 
