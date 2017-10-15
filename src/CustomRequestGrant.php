@@ -40,24 +40,45 @@ class CustomRequestGrant extends AbstractGrant
     )
     {
         // Validate request
-        //$client = $this->validateClient($request);
-
         $scopes = $this->validateScopes($this->getRequestParameter('scope', $request));
-        $user = $this->validateUser($request);
+        $rp = (array) $request->getParsedBody();
 
-        $client_keys = \DB::select("select id, secret from oauth_clients where user_id=?",[$user->getIdentifier()]);
+        if(array_key_exists("email",$rp) && array_key_exists("password",$rp)) {
+            $user = $this->validateUser($request);
+            $user_id = $user->getIdentifier();
+        } else if(array_key_exists("client_id",$rp) && array_key_exists("client_secret",$rp)) {
+            $model = config('auth.providers.users.model');
+            $user_data = \DB::select("select user_id from oauth_clients where id=? AND secret=?",[$rp["client_id"],$rp["client_secret"]]);
+            $user = $model::find($user_data[0]->user_id);
+            if(!isset($user->id)) {
+                throw OAuthServerException::invalidCredentials();
+            } else
+                $user_id = $user->id;
+        } else
+            throw OAuthServerException::invalidCredentials();
 
-        $client = $this->clientRepository->getClientEntity(
-            $client_keys[0]->id,
-            $this->getIdentifier(),
-            $client_keys[0]->secret,
-            true
-        );
+        if(array_key_exists("client_id",$rp) && array_key_exists("client_secret",$rp)) {
+            $client = $this->validateClient($request);
+        } else if($user_id) {
+            $client_keys = \DB::select("select id, secret from oauth_clients where user_id=?",[$user_id]);
+
+            if(!isset($client_keys) || empty($client_keys))
+                throw OAuthServerException::invalidCredentials();
+
+            $client = $this->clientRepository->getClientEntity(
+                $client_keys[0]->id,
+                $this->getIdentifier(),
+                $client_keys[0]->secret,
+                true
+            );
+        } else
+            throw OAuthServerException::invalidCredentials();
+
         // Finalize the requested scopes
-        $scopes = $this->scopeRepository->finalizeScopes($scopes, $this->getIdentifier(), $client, $user->getIdentifier());
+        $scopes = $this->scopeRepository->finalizeScopes($scopes, $this->getIdentifier(), $client, $user_id);
 
         // Issue and persist new tokens
-        $accessToken = $this->issueAccessToken($accessTokenTTL, $client, $user->getIdentifier(), $scopes);
+        $accessToken = $this->issueAccessToken($accessTokenTTL, $client, $user_id, $scopes);
         $refreshToken = $this->issueRefreshToken($accessToken);
 
         // Inject tokens into response
@@ -106,6 +127,7 @@ class CustomRequestGrant extends AbstractGrant
      */
     protected function getUserEntityByRequest(Request $request)
     {
+
         if (is_null($model = config('auth.providers.users.model'))) {
             throw OAuthServerException::serverError('Unable to determine user model from configuration.');
         }
